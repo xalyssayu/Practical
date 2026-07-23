@@ -1,0 +1,203 @@
+name: CI/CD Pipeline - Secure Password App
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============================================
+  # JOB 1: Integration Tests
+  # ============================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      # PostgreSQL service
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: app_user
+          POSTGRES_PASSWORD: secure_pass
+          POSTGRES_DB: app_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov requests
+
+      - name: Run integration tests
+        run: |
+          python -m pytest tests/ -v --cov=app --cov-report=term
+        env:
+          DATABASE_URL: postgresql://app_user:secure_pass@localhost:5432/app_db
+          SECRET_KEY: test-secret-key
+          FLASK_ENV: testing
+
+      - name: Upload test coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+  # ============================================
+  # JOB 2: OWASP Dependency Check
+  # ============================================
+  dependency-check:
+    name: OWASP Dependency Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/DependencyCheck_Action@main
+        with:
+          project: 'Secure Password App'
+          path: '.'
+          format: 'HTML'
+          out: 'dependency-check-report'
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Upload Dependency Check Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: dependency-check-report
+
+  # ============================================
+  # JOB 3: UI Testing with Selenium
+  # ============================================
+  ui-tests:
+    name: UI Tests (Selenium)
+    runs-on: ubuntu-latest
+
+    services:
+      # Start the Flask app
+      flask-app:
+        image: python:3.11-slim
+        env:
+          DATABASE_URL: postgresql://app_user:secure_pass@postgres:5432/app_db
+          SECRET_KEY: test-secret-key
+          FLASK_ENV: testing
+        ports:
+          - 5000:5000
+        options: >-
+          --health-cmd "curl -f http://localhost:5000/ || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        volumes:
+          - ${{ github.workspace }}:/app
+        working_dir: /app
+        entrypoint: |
+          bash -c "
+            pip install -r requirements.txt &&
+            python /app/main.py
+          "
+
+      # Selenium Hub
+      selenium-hub:
+        image: selenium/hub:latest
+        container_name: selenium-hub
+        ports:
+          - 4444:4444
+        options: >-
+          --health-cmd "curl -f http://localhost:4444/wd/hub/status || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # Chrome Node
+      selenium-chrome:
+        image: selenium/node-chrome:latest
+        depends_on:
+          - selenium-hub
+        environment:
+          - SE_EVENT_BUS_HOST=selenium-hub
+          - SE_EVENT_BUS_PUBLISH_PORT=4442
+          - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+        ports:
+          - 7900:7900
+        options: >-
+          --shm-size=2gb
+          --health-cmd "curl -f http://localhost:7900 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install UI test dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install selenium webdriver-manager pytest pytest-html
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for Flask app..."
+          until curl -s -f http://localhost:5000/; do
+            echo "Waiting..."
+            sleep 2
+          done
+          echo "Flask app is ready!"
+
+          echo "Waiting for Selenium Hub..."
+          until curl -s -f http://localhost:4444/wd/hub/status; do
+            echo "Waiting..."
+            sleep 2
+          done
+          echo "Selenium Hub is ready!"
+
+      - name: Run UI tests
+        run: |
+          python -m pytest ui_tests/ -v --html=ui-test-report.html --self-contained-html
+        env:
+          FLASK_URL: http://localhost:5000
+          SELENIUM_HUB: http://localhost:4444/wd/hub
+
+      - name: Upload UI Test Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-report
+          path: ui-test-report.html

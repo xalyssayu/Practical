@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <style>
+        body { font-family: Arial; max-width: 600px; margin: 50px auto; padding: 20px; }
+        .btn { padding: 10px 20px; background: #dc3545; color: white; text-decoration: none; border-radius: 5px; }
+        .btn:hover { background: #c82333; }
+        .badge { background: #28a745; color: white; padding: 2px 10px; border-radius: 20px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <h1>Welcome, {{ username }}! 🎉</h1>
+    <p><span class="badge">✅ Secure</span> Your password meets OWASP C7 Level 1 requirements.</p>
+    <h3>About This App</h3>
+    <ul>
+        <li>✅ Password min 12 chars</li>
+        <li>✅ Password max 128 chars</li>
+        <li>✅ No common passwords</li>
+        <li>✅ Unicode supported</li>
+        <li>✅ Bcrypt hashing (12 rounds)</li>
+        <li>✅ Database stores common passwords from SecLists</li>
+    </ul>
+    <a href="/logout" class="btn">Logout</a>
+</body>
+</html>
